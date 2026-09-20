@@ -22,10 +22,10 @@ jobs:
   switch:
     name: Switch / Check
     runs-on: ubuntu-latest
-    # 写 secret 需要显式授权 (public repo 默认 token 只读)
+    # 写回 secret 不在此 workflow 内做（GitHub 禁止用 Actions token 写 secret）
+    # 新 cookie 会推送到企业微信，手动粘贴到 Secrets 一次即可
     permissions:
       contents: read
-      secrets: write
 
     steps:
       - name: Checkout code
@@ -45,7 +45,7 @@ jobs:
           WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          # 写回 secret 走 api.github.com REST + openssl 加密
+          # 提供 GITHUB_TOKEN 供 run.py 尝试写回 secret (GitHub 禁止时会失败→自动降级为企业微信推送)
           export GITHUB_TOKEN="${{ github.token }}"
           case "${{ github.event_name }}" in
             schedule)
