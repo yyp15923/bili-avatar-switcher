@@ -52,10 +52,9 @@ def main():
     cookie = os.environ.get("BILI_COOKIE", "").strip()
 
     if mode == "check":
-        if cookie_valid(cookie):
-            print("当前 cookie 有效 ✓")
-            sys.exit(0)
-        print("当前 cookie 已失效！", file=sys.stderr)
+        # 【测试模式】强制失败，验证 GitHub 邮件提醒是否正常
+        print("[测试] 模拟 cookie 失效，验证 GitHub 邮件提醒", file=sys.stderr)
+        sys.exit(1)
         print("GitHub 会给你发一封失败邮件。收到后，在你的电脑上运行:", file=sys.stderr)
         print("  pip install qrcode pillow && python login.py relogin", file=sys.stderr)
         print("扫码后把打印出来的 cookie 粘贴到仓库 Settings → Secrets → Actions → BILI_COOKIE", file=sys.stderr)
