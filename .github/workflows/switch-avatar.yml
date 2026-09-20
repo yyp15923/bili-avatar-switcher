@@ -1,64 +1,66 @@
-name: Bili Avatar Switcher
+name: Bili Avatar Auto-Switch
 
-# 定时切换 B站头像
-# GitHub Actions 时区为 UTC，比北京时间慢 8 小时
-# 下面配置：
-#   白天头像(day.jpg): 每天北京时间 08:35 切换
-#   夜晚头像(night.jpg): 每天北京时间 17:30 切换
+# GitHub Actions (UTC) → 北京时间 +8 小时
+# 08:35 早  -> UTC 00:35  切 day
+# 17:30 晚  -> UTC 09:30  切 night
+# 14:30 体检 -> UTC 06:30  只体检 cookie，失效则推二维码扫码续期（不改头像）
 
 on:
   schedule:
-    # 08:35 北京时间 = 00:35 UTC
-    - cron: "35 0 * * *"
-    # 17:30 北京时间 = 09:30 UTC
-    - cron: "30 9 * * *"
-  # 允许在 Actions 面板手动触发（调试用）
+    - cron: "35 0 * * *"   # 08:35 早 - day
+    - cron: "30 9 * * *"   # 17:30 晚 - night
+    - cron: "30 6 * * *"   # 14:30 体检
   workflow_dispatch:
     inputs:
-      use_night:
-        description: "手动切换时是否使用夜晚头像"
-        type: boolean
-        default: false
+      mode:
+        description: "手动触发模式: auto(按时间) / day / night / check(只体检)"
+        type: choice
+        options: [auto, day, night, check]
+        default: auto
 
 jobs:
-  switch-avatar:
+  switch:
+    name: Switch / Check
     runs-on: ubuntu-latest
+    # 写 secret 需要显式授权 (public repo 默认 token 只读)
+    permissions:
+      contents: read
+      secrets: write
 
     steps:
-      - name: 拉取代码
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: 安装 Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: 安装依赖
-        run: pip install requests
+      - name: Install deps
+        run: pip install -q requests "qrcode[pil]"
 
-      - name: 执行切换
+      - name: Run orchestration
         env:
           BILI_COOKIE: ${{ secrets.BILI_COOKIE }}
+          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          # 判断使用哪张图：
-          #   手动触发且勾选 use_night → 夜晚头像(night.jpg)
-          #   自动 08:35(白天)         → 白天头像(day.jpg)
-          #   自动 17:30(夜晚)         → 夜晚头像(night.jpg)
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ "${{ github.event.inputs.use_night }}" = "true" ]; then
-              AVATAR_FILE="images/night.jpg"
-            else
-              AVATAR_FILE="images/day.jpg"
-            fi
-          else
-            # 按 UTC 小时判断：UTC 0:35(北京8:35)→白天，UTC 9:30(北京17:30)→夜晚
-            UTC_HOUR=$(date -u +%H)
-            if [ "$UTC_HOUR" -lt 6 ]; then
-              AVATAR_FILE="images/day.jpg"
-            else
-              AVATAR_FILE="images/night.jpg"
-            fi
-          fi
-
-          echo "切换到头像文件: ${AVATAR_FILE}"
-          python main.py "${BILI_COOKIE}" "${AVATAR_FILE}"
+          # 写回 secret 走 api.github.com REST + openssl 加密
+          export GITHUB_TOKEN="${{ github.token }}"
+          case "${{ github.event_name }}" in
+            schedule)
+              if [ "${{ github.event.schedule }}" = "30 6 * * *" ]; then
+                python run.py check
+              else
+                python run.py switch auto
+              fi
+              ;;
+            workflow_dispatch)
+              MODE="${{ github.event.inputs.mode }}"
+              case "$MODE" in
+                check)   python run.py check ;;
+                auto|day|night) python run.py switch "$MODE" ;;
+                *) echo "未知 mode: $MODE"; exit 1 ;;
+              esac
+              ;;
+          esac
