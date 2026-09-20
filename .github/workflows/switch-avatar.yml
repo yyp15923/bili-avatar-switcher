@@ -1,0 +1,64 @@
+name: Bili Avatar Switcher
+
+# 定时切换 B站头像
+# GitHub Actions 时区为 UTC，比北京时间慢 8 小时
+# 下面配置：
+#   白天头像(day.jpg): 每天北京时间 08:35 切换
+#   夜晚头像(night.jpg): 每天北京时间 17:30 切换
+
+on:
+  schedule:
+    # 08:35 北京时间 = 00:35 UTC
+    - cron: "35 0 * * *"
+    # 17:30 北京时间 = 09:30 UTC
+    - cron: "30 9 * * *"
+  # 允许在 Actions 面板手动触发（调试用）
+  workflow_dispatch:
+    inputs:
+      use_night:
+        description: "手动切换时是否使用夜晚头像"
+        type: boolean
+        default: false
+
+jobs:
+  switch-avatar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        run: pip install requests
+
+      - name: 执行切换
+        env:
+          BILI_COOKIE: ${{ secrets.BILI_COOKIE }}
+        run: |
+          # 判断使用哪张图：
+          #   手动触发且勾选 use_night → 夜晚头像(night.jpg)
+          #   自动 08:35(白天)         → 白天头像(day.jpg)
+          #   自动 17:30(夜晚)         → 夜晚头像(night.jpg)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "${{ github.event.inputs.use_night }}" = "true" ]; then
+              AVATAR_FILE="images/night.jpg"
+            else
+              AVATAR_FILE="images/day.jpg"
+            fi
+          else
+            # 按 UTC 小时判断：UTC 0:35(北京8:35)→白天，UTC 9:30(北京17:30)→夜晚
+            UTC_HOUR=$(date -u +%H)
+            if [ "$UTC_HOUR" -lt 6 ]; then
+              AVATAR_FILE="images/day.jpg"
+            else
+              AVATAR_FILE="images/night.jpg"
+            fi
+          fi
+
+          echo "切换到头像文件: ${AVATAR_FILE}"
+          python main.py "${BILI_COOKIE}" "${AVATAR_FILE}"
