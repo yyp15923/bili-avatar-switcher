@@ -103,25 +103,32 @@ def relogin_cookie() -> str:
     return ""
 
 
-def write_back_secret(cookie: str):
-    """把新 cookie 写回 GitHub 仓库 secret BILI_COOKIE（openssl 加密）。"""
+def write_back_secret(cookie: str) -> bool:
+    """把新 cookie 写回 GitHub 仓库 secret BILI_COOKIE（openssl 加密）。
+
+    注意: GitHub 禁止 workflow 用自身 GITHUB_TOKEN 写 secret，
+    所以实际会失败 → 返回 False，由调用方改为推送企业微信人工更新。
+    """
+    ok = False
     token = os.environ.get("GITHUB_TOKEN", "")
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     if not token or not repo:
         print("(缺少 GITHUB_TOKEN/GITHUB_REPOSITORY，跳过 secret 回写)")
-        return
+        return False
     base = f"https://api.github.com/repos/{repo}/actions/secrets"
     H = {"Authorization": f"token {token}", "Accept": "application/json", "User-Agent": "run.py"}
     try:
+        # 1. 取公钥 (key_id + DER)
         pk = json.loads(urllib.request.urlopen(urllib.request.Request(f"{base}/public-key", headers=H), timeout=30).read().decode())
         key_id = pk["key_id"]
         der = base64.b64decode(pk["key"])
-        # 包一层 PEM 头，openssl 才能读
         open("pub.pem", "w").write(
             "-----BEGIN PUBLIC KEY-----\n"
             + base64.b64encode(der).decode()
             + "\n-----END PUBLIC KEY-----\n"
         )
+        # 2. 把新 cookie 落到临时文件，用 openssl RSA-OAEP 加密
+        open("cookie_new.txt", "w").write(cookie)
         p = subprocess.run(
             ["openssl", "pkeyutl", "-encrypt", "-pubin", "-inkey", "pub.pem",
              "-pkeyopt", "rsa_padding_mode:oaep", "-pkeyopt", "rsa_md_algorithm:sha256",
@@ -131,6 +138,7 @@ def write_back_secret(cookie: str):
         if p.returncode != 0:
             raise RuntimeError(f"openssl 加密失败: {p.stderr.decode()[:200]}")
         enc = base64.b64encode(p.stdout).decode()
+        # 3. PUT 写回
         req = urllib.request.Request(
             f"{base}/BILI_COOKIE",
             data=json.dumps({"name": "BILI_COOKIE", "encrypted_value": enc, "key_id": key_id}).encode(),
@@ -138,8 +146,10 @@ def write_back_secret(cookie: str):
         )
         with urllib.request.urlopen(req, timeout=30) as r:
             print(f"新 cookie 已写回 secret BILI_COOKIE (HTTP {r.status})")
+            ok = True
     except Exception as e:
-        print(f"secret 回写失败: {e}")
+        print(f"secret 自动回写失败 (预期: GitHub 禁止 workflow 写 secret): {e}")
+    return ok
 
 
 def ensure_cookie(cookie: str) -> str:
@@ -148,11 +158,19 @@ def ensure_cookie(cookie: str) -> str:
         return cookie
     print("当前 cookie 已失效，尝试扫码续期…")
     new = relogin_cookie()
-    if new:
-        write_back_secret(new)
-        return new.strip()
-    print("扫码续期失败（本轮放弃）")
-    return ""
+    if not new:
+        print("扫码续期失败（本轮放弃）")
+        return ""
+    # 本次切换先继续用新 cookie；尝试自动写回 secret，失败则提醒人工更新
+    new = new.strip()
+    if not write_back_secret(new):
+        wecom_notify(
+            "【B站头像任务】扫码拿到新 cookie，但 GitHub 禁止自动写回 secret。\n"
+            "请手动更新: 打开仓库 Settings → Secrets → Actions → BILI_COOKIE → "
+            "粘贴下面的新 cookie（本段会同步发你一份，可直接复制）:\n\n"
+            + new
+        )
+    return new
 
 
 def pick_image(mode: str) -> str:
