@@ -1,0 +1,3 @@
+# 不要把真实 cookie 写进仓库
+*.cookie
+.env
