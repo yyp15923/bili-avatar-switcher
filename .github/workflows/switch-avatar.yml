@@ -22,8 +22,8 @@ jobs:
   switch:
     name: Switch / Check
     runs-on: ubuntu-latest
-    # 写回 secret 不在此 workflow 内做（GitHub 禁止用 Actions token 写 secret）
-    # 新 cookie 会推送到企业微信，手动粘贴到 Secrets 一次即可
+    # cookie 失效时 14:30 的 check 会跑红 → GitHub 自动发邮件给仓库 owner
+    # 你收到邮件后在本机跑 `python login.py relogin` 扫码，把新 cookie 粘回 Secrets
     permissions:
       contents: read
 
@@ -42,11 +42,7 @@ jobs:
       - name: Run orchestration
         env:
           BILI_COOKIE: ${{ secrets.BILI_COOKIE }}
-          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          # 提供 GITHUB_TOKEN 供 run.py 尝试写回 secret (GitHub 禁止时会失败→自动降级为企业微信推送)
-          export GITHUB_TOKEN="${{ github.token }}"
           case "${{ github.event_name }}" in
             schedule)
               if [ "${{ github.event.schedule }}" = "30 6 * * *" ]; then
