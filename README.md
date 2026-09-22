@@ -3,6 +3,21 @@
 利用 B站官方头像更新接口 `x/member/web/face/update`，配合 GitHub Actions，
 按北京时间自动在「白天图 / 夜晚图」之间切换。
 
+## 换台电脑？两种方式
+
+**A. 用 WorkBuddy（推荐）** — 已打包成 WorkBuddy 技能，装在
+`C:\Users\yp\.workbuddy\skills\bili-avatar-switcher\`。
+在另一台装了 WorkBuddy 的电脑上直接说「帮我装 B站头像自动切换」，它会自动引导你拿 cookie 并建好计划任务。
+
+**B. 用离线包** — `bili-avatar-switcher.zip`（约 298 KB，不含 cookie）。解压后：
+
+```bat
+安装.bat                          :: 双击，按提示粘 cookie，自动建计划任务
+python install.py "<cookie>"      :: 或命令行一行搞定
+```
+
+三个 bat 快捷方式：`安装.bat` / `立刻切换一次.bat` / `卸载.bat`。
+
 ## 当前运行方式：本机计划任务（主力） + GitHub Actions（兜底）
 
 > **重要背景**：GitHub Actions 的 `schedule` 在本仓库实测**已停止发车**——
