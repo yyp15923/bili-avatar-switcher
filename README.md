@@ -1,69 +1,102 @@
 # B站头像白天/夜晚自动切换
 
-利用 B站官方的头像更新接口 `x/member/web/face/update`，配合 GitHub Actions 定时任务，
-每天固定时间自动更换 B站头像：早上切白天图，下午切夜晚图。
+利用 B站官方头像更新接口 `x/member/web/face/update`，配合 GitHub Actions，
+按北京时间自动在「白天图 / 夜晚图」之间切换。
 
-## 原理
+## 核心设计：为什么是「每 30 分钟巡检」而不是「两个闹钟」
 
-- B站允许通过 API 直接上传更换头像，需要登录态（Cookie）+ CSRF 校验。
-- GitHub Actions 提供免费的定时执行环境，无需自己的服务器。
-- 本仓库放两张头像图（白天 / 夜晚），到点自动调用接口上传对应那张。
-- 每天 14:30 自动体检 cookie；失效时任务跑红，**GitHub 自动发邮件提醒你**。
+GitHub Actions 的 `schedule` **并不准点**。本仓库实测：
 
-## 定时（北京时间）
+| 计划 cron (UTC) | 对应北京时间 | 实际触发时间(北京) | 延迟 |
+|---|---|---|---|
+| `35 0 * * *` | 08:35 | 21:38 | ~13 小时 |
+| `30 6 * * *` | 14:30 | 21:04 | ~6.5 小时 |
+| `30 9 * * *` | 17:30 | 23:58 | ~6.5 小时 |
 
-| 时间 | 动作 |
+免费账号在高峰期排队，延迟几小时是常态。所以本方案**不押宝某一次准点触发**，而是：
+
+1. **每 30 分钟巡检一次**（`cron: "*/30 * * * *"`）；
+2. 按【北京时间】算出当前时段该显示哪张图；
+3. 调 `nav` 接口读当前头像 URL —— **B站头像 URL 是图片内容哈希，同一张图永远返回同一个 URL**；
+4. 只有「当前头像 ≠ 目标图」时才真正上传，其余时候零操作退出。
+
+效果：无论 GitHub 延迟多久，切换误差 ≤ 30 分钟；稳定态每天只上传 2 次，不触发风控。
+
+## 时段规则（北京时间）
+
+| 时段 | 显示 |
 |---|---|
-| 08:35 | 切换为白天图 `images/day.jpg` |
-| 17:30 | 切换为夜晚图 `images/night.jpg` |
-| 14:30 | 体检 cookie；失效则任务失败 → 发邮件提醒 |
+| 08:35 ~ 17:30 | `images/day.jpg` |
+| 17:30 ~ 次日 08:35 | `images/night.jpg` |
+| 每天 14:30 | 体检 cookie，失效才跑红 → GitHub 发邮件 |
 
-（GitHub Actions 时区是 UTC，cron 已换算好，无需改。）
+纠偏窗口（仅在「当前头像是陌生图」时才动手，避免覆盖你手动设置的头像）：
+day `08:30~10:00`，night `17:30~19:00`。
 
 ## 首次部署
 
 1. 在 GitHub 建仓库，把本项目文件推上去。
 2. 仓库 **Settings → Secrets and variables → Actions** 新建 secret：
    - `BILI_COOKIE` = 你的 B站整段 cookie（登录 bilibili 后 F12 → Network → 复制任一请求的 `cookie:` 整段）。
-3. 进 **Actions** 面板手动跑一次 `check`，确认 cookie 有效（绿）。
+3. 进 **Actions** 面板手动跑一次，mode 选 `check`，确认 cookie 有效（绿）。
 
 ## cookie 过期怎么办（关键）
 
 cookie 一般几天到几周过期。过期后：
 
-1. 14:30 的体检会跑红，**GitHub 自动给你（仓库 owner）发一封失败邮件**。
+1. 每天 14:30 的体检会跑红，**GitHub 自动给你（仓库 owner）发一封失败邮件**。
 2. 你在任意电脑（本仓库克隆目录）运行：
    ```bash
    pip install qrcode pillow
    python login.py relogin
    ```
-   终端会生成二维码 `qr.png`（也打印出扫码链接）→ 用 **B站 App** 扫 →
+   终端生成二维码 `qr.png`（并打印扫码链接）→ 用 **B站 App** 扫 →
    成功后终端打印**新 cookie** 一整行。
-3. 把那行新 cookie 粘贴回仓库 **Settings → Secrets → BILI_COOKIE**（覆盖旧值）。
+3. 把新 cookie 写回 secret，二选一：
+   - 手动：粘贴到 **Settings → Secrets → Actions → BILI_COOKIE**（覆盖旧值）；
+   - 命令行：
+     ```bash
+     pip install pynacl
+     export GITHUB_TOKEN="ghp_xxx"      # 需要 repo 权限
+     python set_secret.py "<新cookie>"
+     ```
 
-> 为什么不在 GitHub 上自动扫码：B站登录二维码 180 秒就过期，且 Actions 下载/扫码来回不及时，
-> 所以采用「邮件提醒 + 本地一条命令扫码续期」，全程你只花 1 分钟、几个月一次。
+> 为什么不在 GitHub 上自动扫码：B站登录二维码 180 秒就过期，Actions 下载/扫码来回不及时。
+> 所以采用「邮件提醒 + 本地一条命令扫码续期」，几个月一次，每次 1 分钟。
 
 ## 换图 / 改时间
 
-- **换头像**：直接替换 `images/day.jpg`、`images/night.jpg` 后提交。
-- **改时间**：编辑 `.github/workflows/switch-avatar.yml` 的 cron（UTC，北京时间 -8），
-  并同步 `run.py` 里 `pick_image` 的 UTC 小时判断。
+- **换头像**：替换 `images/day.jpg`、`images/night.jpg` 后提交，
+  然后跑一次 `python probe_face.py "<cookie>"` 拿到新的 face URL，
+  更新 `run.py` 里 `KNOWN_FACE` 两个常量（否则幂等判断会失效）。
+- **改时间**：改 `run.py` 里 `target_of()` 的时段判断 和 `WINDOW` 常量即可，
+  workflow 的 `*/30` 巡检不用动。
 
 ## 本地测试
 
 ```bash
 pip install -r requirements.txt
-# 用你的 cookie 直接试上传（会真正换你当前头像）
-python main.py "<你的cookie>" "images/day.jpg"
+python main.py "<你的cookie>" "images/day.jpg"   # 直接上传（会真换头像）
+# 或走编排逻辑：
+export BILI_COOKIE="<你的cookie>"
+python run.py auto     # 按需切换（幂等）
+python run.py check    # 只体检
+python run.py force    # 强制按当前时段上传一次
 ```
 
 ## 文件说明
 
 | 文件 | 作用 |
 |---|---|
+| `run.py` | Actions 编排：`auto` 巡检切换 / `check` 体检 / `force` 强制上传（纯标准库，无需 pip） |
 | `main.py` | 调 B站接口上传头像，含错误码翻译 |
-| `run.py` | Actions 编排：`check` 体检 / `switch` 切换 |
 | `login.py` | 扫码登录：`relogin` 一条命令拿新 cookie |
-| `.github/workflows/switch-avatar.yml` | 定时 + 手动触发 |
+| `set_secret.py` | 命令行写回 GitHub Secret（libsodium sealed-box 加密） |
+| `probe_face.py` | 探测两张图对应的 face URL，用于更新 `KNOWN_FACE` |
+| `.github/workflows/switch-avatar.yml` | 每 30 分钟巡检 + 每日体检 |
 | `images/day.jpg` / `night.jpg` | 白天 / 夜晚头像 |
+
+## 额度
+
+每天 48 次巡检 × 约 15 秒 ≈ 12 分钟/天 ≈ 360 分钟/月。
+公共仓库 Actions 免费无限；私有仓库免费额度 2000 分钟/月，也够用。
