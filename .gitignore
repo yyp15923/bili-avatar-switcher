@@ -1,3 +1,8 @@
 # 不要把真实 cookie 写进仓库
 *.cookie
+cookie.txt
 .env
+
+logs/
+qr.png
+__pycache__/
