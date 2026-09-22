@@ -148,8 +148,27 @@ def upload_face(img_name, cookie, csrf):
         return {"code": -1, "message": str(e)}
 
 
+def log(msg):
+    """追加一行到本地日志，方便本机计划任务排查（GitHub 上也能看）"""
+    print(msg)
+    try:
+        os.makedirs(os.path.join(BASE, "logs"), exist_ok=True)
+        with open(os.path.join(BASE, "logs", "switch.log"), "a", encoding="utf-8") as f:
+            f.write(f"[{bj_now():%Y-%m-%d %H:%M:%S}] {msg}\n")
+    except Exception:
+        pass
+
+
 def cookie_of():
-    return os.environ.get("BILI_COOKIE", "").strip()
+    """优先读环境变量 BILI_COOKIE，其次读同目录 cookie.txt（本机计划任务用）"""
+    env = os.environ.get("BILI_COOKIE", "").strip()
+    if env:
+        return env
+    fp = os.path.join(BASE, "cookie.txt")
+    if os.path.exists(fp):
+        with open(fp, encoding="utf-8") as f:
+            return f.read().strip()
+    return ""
 
 
 def csrf_of(cookie):
@@ -190,23 +209,19 @@ def cmd_auto(force=False):
     want = KNOWN_FACE[target]
     other = "night" if target == "day" else "day"
 
-    print(f"北京时间 {now:%Y-%m-%d %H:%M} | 用户 {uname} | 目标 {target}.jpg")
-    print(f"当前头像 {face}")
+    log(f"北京时间 {now:%Y-%m-%d %H:%M} | 用户 {uname} | 目标 {target}.jpg | 当前头像 {face}")
 
     if not force:
         if face == want:
-            print(f"当前头像已是目标图 {target}.jpg，无需操作 ✓")
+            log("无需操作 ✓")
             sys.exit(0)
         if face == KNOWN_FACE[other]:
-            print(f"当前还是 {other}.jpg，立即纠正为 {target}.jpg")
+            log(f"当前还是 {other}.jpg，立即纠正为 {target}.jpg")
         elif not in_window(target, now):
-            print(
-                f"当前头像既不是 day 也不是 night（你可能手动换过），"
-                f"且不在 {target} 的纠偏窗口内 → 保持不动，尊重你的手动设置"
-            )
+            log("当前头像是陌生图且不在纠偏窗口内 → 保持不动，尊重你的手动设置")
             sys.exit(0)
         else:
-            print(f"当前头像是陌生图，处于 {target} 纠偏窗口内 → 切换")
+            log(f"当前头像是陌生图，处于 {target} 纠偏窗口内 → 切换")
 
     csrf = csrf_of(cookie)
     if not csrf:
@@ -215,9 +230,9 @@ def cmd_auto(force=False):
 
     res = upload_face(target, cookie, csrf)
     if res.get("code") == 0:
-        print(f"[成功] 头像已切换为 images/{target}.jpg")
+        log(f"[成功] 头像已切换为 images/{target}.jpg")
         sys.exit(0)
-    print(f"[失败] code={res.get('code')} msg={res.get('message')}", file=sys.stderr)
+    log(f"[失败] code={res.get('code')} msg={res.get('message')}")
     sys.exit(1)
 
 
