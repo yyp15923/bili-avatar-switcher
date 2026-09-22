@@ -1,0 +1,13 @@
+name: Probe Schedule
+on:
+  schedule:
+    - cron: "48 6 * * *"
+    - cron: "53 6 * * *"
+    - cron: "58 6 * * *"
+jobs:
+  p:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - run: echo "probe fired at $(date -u)"
