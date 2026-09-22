@@ -3,7 +3,44 @@
 利用 B站官方头像更新接口 `x/member/web/face/update`，配合 GitHub Actions，
 按北京时间自动在「白天图 / 夜晚图」之间切换。
 
-## 核心设计：为什么是「每 30 分钟巡检」而不是「两个闹钟」
+## 当前运行方式：本机计划任务（主力） + GitHub Actions（兜底）
+
+> **重要背景**：GitHub Actions 的 `schedule` 在本仓库实测**已停止发车**——
+> 连续 15 小时 0 次定时运行，另建探测 workflow 定在三个相邻分钟点也全部未触发；
+> 同期手动触发（`workflow_dispatch`）却能秒起。
+> 排除项：非 fork、未禁用、Actions 全开、公共仓库无额度问题。
+> 结论是调度器不可用，不是延迟问题。
+>
+> 所以主力改为**本机 Windows 计划任务**，直接连 B站换头像，不经过 GitHub。
+> GitHub 那套保留着，哪天调度器恢复了就是白送的一层兜底。
+
+### 本机计划任务（已在 DESKTOP-JTF6GG1 上建好）
+
+- 任务名：`BiliAvatarSwitch`
+- 频率：每 15 分钟一次；用 `pythonw.exe` 静默执行，不弹黑窗口
+- cookie 放在 `cookie.txt`（已在 `.gitignore` 里，不会进仓库）
+- 运行日志：`logs/switch.log`
+
+查看 / 手动跑一次：
+
+```bat
+schtasks /Query /TN "BiliAvatarSwitch" /FO LIST
+schtasks /Run   /TN "BiliAvatarSwitch"
+type logs\switch.log
+```
+
+重建任务（换电脑或重装后）：
+
+```bat
+set PYW=C:\Users\yp\.workbuddy\binaries\python\versions\3.13.12\pythonw.exe
+set RUN=C:\Users\yp\WorkBuddy\2026-09-20-10-45-14\bili-avatar-switcher\run.py
+schtasks /Create /TN "BiliAvatarSwitch" /TR "\"%PYW%\" \"%RUN%\" auto" /SC MINUTE /MO 15 /F
+```
+
+> 局限：电脑关机 / 深度睡眠时不执行。8:35 和 17:30 基本都在用电脑，够用；
+> 若某次错过，下一次巡检（15 分钟内）会自动纠正回来。
+
+## 核心设计：为什么是「巡检」而不是「两个闹钟」
 
 GitHub Actions 的 `schedule` **并不准点**。本仓库实测：
 
