@@ -1,29 +1,37 @@
 name: Bili Avatar Auto-Switch
 
-# GitHub Actions (UTC) → 北京时间 +8 小时
-# 08:35 早  -> UTC 00:35  切 day
-# 17:30 晚  -> UTC 09:30  切 night
-# 14:30 体检 -> UTC 06:30  只体检 cookie，失效则推二维码扫码续期（不改头像）
+# ── 为什么是"每 30 分钟巡检"，而不是只定两个闹钟 ──────────────────────
+# GitHub Actions 的 schedule 并不准点，实测本仓库的定时事件延迟 3~13 小时
+# （免费账号高峰期排队）。所以不再押宝"08:35 / 17:30 各跑一次"，改成：
+#   · 每 30 分钟巡检一次，按【北京时间】判断当前该显示哪张图；
+#   · 读 nav 接口拿当前头像 URL（B站头像 URL 是图片内容哈希，同图恒定）；
+#   · 只有"当前头像 != 目标图"时才上传，其余时候零操作退出。
+# 效果：无论 GitHub 延迟多久，切换误差 <= 30 分钟；稳定态每天只上传 2 次。
+#
+# cron 用 UTC，北京时间 = UTC + 8
 
 on:
   schedule:
-    - cron: "35 0 * * *"   # 08:35 早 - day
-    - cron: "30 9 * * *"   # 17:30 晚 - night
-    - cron: "30 6 * * *"   # 14:30 体检
+    - cron: "*/30 * * * *"   # 每 30 分钟巡检（覆盖全天，抗 GitHub 延迟）
+    - cron: "30 6 * * *"     # UTC 06:30 = 北京 14:30，每日体检 cookie
   workflow_dispatch:
     inputs:
       mode:
-        description: "手动触发模式: auto(按时间) / day / night / check(只体检)"
+        description: "手动触发模式"
         type: choice
-        options: [auto, day, night, check]
+        options: [auto, force, check]
         default: auto
+
+concurrency:
+  group: bili-avatar
+  cancel-in-progress: false
 
 jobs:
   switch:
     name: Switch / Check
     runs-on: ubuntu-latest
-    # cookie 失效时 14:30 的 check 会跑红 → GitHub 自动发邮件给仓库 owner
-    # 你收到邮件后在本机跑 `python login.py relogin` 扫码，把新 cookie 粘回 Secrets
+    # cookie 失效时只有 14:30 的 check 会跑红 → GitHub 自动发邮件给仓库 owner。
+    # 收到邮件后在本机跑 `python login.py relogin` 扫码，把新 cookie 粘回 Secrets。
     permissions:
       contents: read
 
@@ -31,32 +39,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install deps
-        run: pip install -q requests "qrcode[pil]"
-
       - name: Run orchestration
         env:
           BILI_COOKIE: ${{ secrets.BILI_COOKIE }}
         run: |
-          case "${{ github.event_name }}" in
-            schedule)
-              if [ "${{ github.event.schedule }}" = "30 6 * * *" ]; then
-                python run.py check
-              else
-                python run.py switch auto
-              fi
-              ;;
-            workflow_dispatch)
-              MODE="${{ github.event.inputs.mode }}"
-              case "$MODE" in
-                check)   python run.py check ;;
-                auto|day|night) python run.py switch "$MODE" ;;
-                *) echo "未知 mode: $MODE"; exit 1 ;;
-              esac
-              ;;
-          esac
+          MODE="${{ github.event.inputs.mode }}"
+          if [ "${{ github.event.schedule }}" = "30 6 * * *" ] || [ "$MODE" = "check" ]; then
+            echo "== check 模式：体检 cookie =="
+            python3 run.py check
+          elif [ "$MODE" = "force" ]; then
+            echo "== force 模式：强制按当前时段上传 =="
+            python3 run.py force
+          else
+            echo "== auto 模式：按需切换 =="
+            python3 run.py auto
+          fi
